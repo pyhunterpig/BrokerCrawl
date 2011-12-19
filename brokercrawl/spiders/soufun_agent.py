@@ -6,8 +6,47 @@ import re
 from scrapy.selector import HtmlXPathSelector
 from scrapy.contrib.linkextractors.sgml import SgmlLinkExtractor
 from scrapy.contrib.spiders import CrawlSpider, Rule
+from scrapy.spider import BaseSpider
 from brokercrawl.items import BrokercrawlItem
+import urllib2
 
+class SoufunSpider(BaseSpider):
+    name = 'soufun_list'
+    start_urls = []
+    
+    def totalpage(self):
+        url = 'http://esf.soufun.com/agenthome/-i31'
+        hxs = HtmlXPathSelector(text=urllib2.urlopen(url).read())
+        total = hxs.select('//p[contains(@class,"pages")]/strong/text()').re('(\d+)')[-1]
+        if total.isalnum():
+            return int(total)
+        else:
+            return 1
+        
+    def start_requests(self):
+        self.start_urls = ['http://esf.soufun.com/agenthome/-i3%s' %i for i in range(1,self.totalpage()+1) ]
+        
+        return super(SoufunSpider,self).start_requests()
+        
+    def parse(self, response):
+        self.log('Hi, this is an list page! %s' % response.url)
+        items = []
+    
+        hxs = HtmlXPathSelector(response)
+        
+        #brokers = hxs.select('//div[contains(@id,"list_") and not(@class)]')
+        brokers = hxs.select('//div[@class="house"]')
+        listindex = 0
+        for broker in brokers:
+            listindex = listindex + 1
+            item = BrokercrawlItem()
+            itemdata = parse_broker(broker)
+            for field in item.fields:
+                item[field] = itemdata.get(field,'')
+            
+            items.append(item)
+        return items    
+    
 class SoufunAgentSpider(CrawlSpider):
     name = 'soufun_agent'
     allowed_domains = ['soufun.com']
@@ -60,23 +99,15 @@ def parse_broker(brokerselector):
     分析列表页中的经纪人概要信息
     """
     tempdict = {}
-    title = brokerselector.select('div[@class="title"]')
+    title = brokerselector.select('dl/dt/p')
     if title:
-        title = title[0]
-        tempdict['site'] = " ".join(title.select('dl/dd/strong/a/@href').extract())
-        tempdict['uname'] = " ".join(title.select('dl/dd/strong/a/text()').re(r'\s*(.*)\r'))          #姓名
-        tempdict['mobile'] = " ".join(title.select('dl/dd[contains(@class,"floatr")]/strong/text()').re(r'\s*(.*)\r'))        #手机
-        tempdict['company'] = " ".join(title.select('dl/dd[@class="floatr marr13 wid50"]/text()').re(r'\s*(.*)\r'))        #所属公司
-        tempdict['lastlogin'] = " ".join(title.select('dl/dd[@class="floatr marr13"]/text()').re(r'\s*(.*)\r'))     #上次登录时间
-    info = brokerselector.select('div/div[@class="floatl wid100"]')
-    if info:
-        info = info[0]
-        tempdict['uid'] = " ".join(info.select('dl/dd[@class="floatl mart10"]/text()').re(r'\s*(.*)&'))          #ID编号
-        tempdict['certification'] = " ".join(info.select('dl/dd[@class="fontm"]/img/@alt').re(r'\s*(.*)')) #认证
-    tempdict['email'] = ""      #邮件地址
-    tempdict['area'] = ""          #区域
-    tempdict['active'] =  ""       #活跃度
-    tempdict['porfile'] = ""       #简介存放无法放入其他字段的个人信息
+        tempdict['uid'] = title[0].select('span/text()').re('(\d+)')[0]
+        tempdict['site'] = title[0].select('a/@href').extract()[0].strip()
+        tempdict['uname'] = title[0].select('a/text()').extract()[0].strip()        #姓名
+        tempdict['mobile'] = title[2].select('strong/text()').extract()[0].strip()        #手机
+        tempdict['company'] = title[1].select('span/text()').extract()[0].strip()       #所属公司
+    
+    tempdict['porfile'] = " ".join(brokerselector.select('dl/dd/a/img/@alt').extract())       #简介存放无法放入其他字段的个人信息
         
     return tempdict
 
